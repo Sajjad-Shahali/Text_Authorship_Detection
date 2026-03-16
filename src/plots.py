@@ -151,9 +151,11 @@ def plot_all_learning_curves(
 
     for idx, (model_name, lc) in enumerate(lc_results.items()):
         ax = axes_flat[idx]
-        ts = lc["train_sizes"]
-        tm, ts_std = lc["train_mean"], lc["train_std"]
-        vm, vs_std = lc["val_mean"], lc["val_std"]
+        ts     = np.array(lc["train_sizes"])
+        tm     = np.array(lc["train_mean"])
+        ts_std = np.array(lc["train_std"])
+        vm     = np.array(lc["val_mean"])
+        vs_std = np.array(lc["val_std"])
 
         ax.fill_between(ts, tm - ts_std, tm + ts_std, alpha=0.12, color=PALETTE[0])
         ax.plot(ts, tm, "o-", color=PALETTE[0], linewidth=2, markersize=4, label="Train")
