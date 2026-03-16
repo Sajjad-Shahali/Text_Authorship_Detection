@@ -93,8 +93,8 @@ models:
     - "ensemble_soft"                  # Soft calibrated voting
     - "sgd_hinge"                      # Fast baseline reference
 
-  # lr_seed_avg is expected to beat plain logistic_regression_balanced
-  # on minority classes (DeepSeek/Claude) due to variance reduction
+  # NOTE: when run_cv=true, the CV winner OVERRIDES this setting.
+  # This value is only used when run_cv=false (direct final training).
   best_model: "lr_seed_avg"
 
   # ── Model hyperparameters ────────────────────────────────────────────────
@@ -153,7 +153,7 @@ training:
   save_artifacts: true
   verbose: true
   random_state: 42
-  use_best_fold_model: true   # Use best CV fold model instead of full refit
+  use_best_fold_model: false  # false = retrain on ALL 2400 samples (safer for LB)
 
 # -----------------------------------------------------------
 # Error Analysis

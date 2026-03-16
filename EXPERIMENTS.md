@@ -124,6 +124,20 @@ Tracking every run: what changed, what the CV F1 was, what the Kaggle leaderboar
 - Seed averaging will give more stable DeepSeek predictions
 - Best-fold model avoids the overfit that comes from training on all data
 
+
+### Bug fixes applied before Run 3
+Three pipeline bugs found and fixed:
+1. **Model mismatch**: `best_model` in config was used for final training, but thresholds
+   were computed for the CV winner. Fixed: CV winner now ALWAYS overrides config for final
+   training, so model and thresholds always match.
+2. **Thresholds applied to wrong model**: threshold_optimizer uses OOF proba of the CV
+   winner; applying those thresholds to a different model breaks the calibration.
+   Fixed by fix #1 above.
+3. **`use_best_fold_model`**: was True, meaning only 80% of data was used for final model.
+   Set to False — retrain on all 2400 samples for the submitted model.
+4. **Submission not saved to experiment folder**: added shutil copy of submission CSV into
+   each experiment's directory for full reproducibility.
+
 ### How to run
 ```
 cd d:\hachaton	ext-authorship-detection

@@ -103,6 +103,19 @@ def main():
     out_path = str(Path(paths["submissions_dir"]) / f"submission_{timestamp}.csv")
     save_submission(submission_df, out_path, also_save_latest=True)
 
+    # Also copy submission into the experiment folder for full run reproducibility
+    exp_dir_file = Path(paths.get("artifacts_dir", "artifacts")) / "latest_exp_dir.txt"
+    if exp_dir_file.exists():
+        try:
+            exp_dir = Path(exp_dir_file.read_text().strip())
+            if exp_dir.exists():
+                import shutil
+                exp_sub = exp_dir / f"submission_{timestamp}.csv"
+                shutil.copy2(out_path, exp_sub)
+                logger.info(f"  Submission also saved to experiment: {exp_sub}")
+        except Exception as e:
+            logger.warning(f"  Could not copy submission to experiment dir: {e}")
+
     total_time = time.time() - run_start
     logger.info("=" * 60)
     logger.info("INFERENCE COMPLETE")

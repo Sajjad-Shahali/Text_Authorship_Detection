@@ -119,7 +119,16 @@ def main():
         if exp_dir:
             comparison_df.to_csv(exp_dir / MODEL_COMPARISON_FILE, index=False)
 
-        logger.info(f"CV best model: {cv_best_name} | Config best model: {best_model_name}")
+        # ── CRITICAL: always use the CV winner as the final model ─────────────
+        # This ensures the saved model matches the thresholds (which are computed
+        # for the CV winner). Ignoring config.models.best_model when CV is run.
+        if cv_best_name != best_model_name:
+            logger.info(
+                f"  [NOTE] CV winner ({cv_best_name}) differs from config best_model "
+                f"({best_model_name}). Using CV winner for final training."
+            )
+        best_model_name = cv_best_name
+        logger.info(f"CV best model: {cv_best_name}  (this will be trained and submitted)")
         logger.info(f"Plots saved to: {exp_plots_dir}")
 
         # Copy thresholds to artifacts root so main_infer.py can find them
@@ -150,18 +159,26 @@ def main():
     model_save_path = paths["best_model_file"]
     logger.info(f"\nTraining final model: {best_model_name}")
 
-    # Pass best fold pipeline if available (use_best_fold_model in config)
+    # use_best_fold_model: load the fold with highest val F1 instead of
+    # retraining on all data. Reduces overfit at cost of ~20% less training data.
+    # Only valid when CV was run AND the best fold model was saved for THIS model.
     _best_fold_pipe = None
-    if training_cfg.get("use_best_fold_model", False) and "all_cv_results" in dir():
-        best_cv = all_cv_results.get(best_model_name, {})
+    if training_cfg.get("use_best_fold_model", False):
         _best_fold_path = (
             exp_dir / best_model_name / "best_fold_model.joblib"
             if exp_dir else None
         )
         if _best_fold_path and _best_fold_path.exists():
-            import joblib as _jl
-            _best_fold_pipe = _jl.load(_best_fold_path)
-            logger.info(f"  Loaded best fold pipeline from: {_best_fold_path}")
+            _best_fold_pipe = joblib.load(_best_fold_path)
+            logger.info(
+                f"  [use_best_fold_model=True] Loading best CV fold pipeline: "
+                f"{_best_fold_path}"
+            )
+        else:
+            logger.info(
+                f"  [use_best_fold_model=True] No fold model found for {best_model_name}, "
+                f"will retrain on all data."
+            )
 
     pipeline = train_final_model(
         X, y, best_model_name, config,
@@ -172,6 +189,8 @@ def main():
     if exp_dir:
         joblib.dump(pipeline, exp_dir / BEST_MODEL_FILE)
         logger.info(f"Final model also saved to: {exp_dir / BEST_MODEL_FILE}")
+        # Write latest experiment dir path so main_infer.py can save submission there
+        save_text(str(exp_dir), str(Path(paths["artifacts_dir"]) / "latest_exp_dir.txt"))
 
     # ── Summary ────────────────────────────────────────────────────────────────
     total_time = time.time() - run_start
