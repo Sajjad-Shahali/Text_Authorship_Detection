@@ -1,0 +1,129 @@
+# ============================================================
+# MALTO Text Authorship Detection — Configuration
+# ============================================================
+# All parameters are controlled here. No hardcoded values in src/.
+# Supports local and Kaggle execution via path overrides.
+
+# -----------------------------------------------------------
+# Paths
+# -----------------------------------------------------------
+paths:
+  data_dir: "data"
+  artifacts_dir: "artifacts"
+  models_dir: "artifacts/models"
+  metrics_dir: "artifacts/metrics"
+  submissions_dir: "artifacts/submissions"
+  analysis_dir: "artifacts/analysis"
+  experiments_dir: "artifacts/experiments"
+  logs_dir: "artifacts/logs"
+
+  train_file: "data/train.csv"
+  test_file: "data/test.csv"
+  sample_submission_file: "data/sample_submission.csv"
+
+  best_model_file: "artifacts/models/best_model.joblib"
+
+# -----------------------------------------------------------
+# Preprocessing
+# -----------------------------------------------------------
+preprocessing:
+  normalize_unicode: true
+  strip_whitespace: true
+  remove_repeated_spaces: true
+  lowercase: false          # Keep False: capitalization is a stylistic signal
+  remove_punctuation: false # Keep False: punctuation is discriminative
+  remove_numbers: false     # Keep False: numeric patterns can distinguish sources
+
+# -----------------------------------------------------------
+# Feature Engineering
+# -----------------------------------------------------------
+features:
+  # Word-level TF-IDF
+  word_tfidf:
+    ngram_range: [1, 2]
+    max_features: 100000
+    min_df: 2
+    max_df: 0.95
+    sublinear_tf: true
+    analyzer: "word"
+
+  # Character-level TF-IDF
+  char_tfidf:
+    ngram_range: [3, 5]
+    max_features: 100000
+    min_df: 3
+    max_df: 0.95
+    sublinear_tf: true
+    analyzer: "char_wb"
+
+# -----------------------------------------------------------
+# Cross-Validation
+# -----------------------------------------------------------
+validation:
+  n_splits: 5
+  random_state: 42
+  shuffle: true
+
+# -----------------------------------------------------------
+# Models
+# -----------------------------------------------------------
+models:
+  # Which models to compare in CV
+  run_models:
+    - "logistic_regression"
+    - "linear_svc"
+    - "complement_nb"
+
+  # Model to use for final training and submission
+  best_model: "logistic_regression"
+
+  logistic_regression:
+    C: 1.0
+    max_iter: 1000
+    solver: "lbfgs"
+    class_weight: null   # set to "balanced" if class imbalance is severe
+    random_state: 42
+    n_jobs: -1
+
+  linear_svc:
+    C: 0.1
+    max_iter: 2000
+    class_weight: null
+    random_state: 42
+
+  complement_nb:
+    alpha: 0.1
+
+# -----------------------------------------------------------
+# Training
+# -----------------------------------------------------------
+training:
+  run_cv: true             # Set false to skip CV and go straight to final fit
+  run_model_comparison: true
+  save_artifacts: true
+  verbose: true
+  random_state: 42
+
+# -----------------------------------------------------------
+# Error Analysis
+# -----------------------------------------------------------
+analysis:
+  top_n_errors: 50         # Number of misclassified examples to save
+  save_confusion_matrix: true
+  save_classification_report: true
+
+# -----------------------------------------------------------
+# Experiment Tracking
+# -----------------------------------------------------------
+experiment:
+  enabled: true
+  name_prefix: "run"       # Experiment folder prefix
+
+# -----------------------------------------------------------
+# Kaggle / Environment
+# -----------------------------------------------------------
+environment:
+  # Set to "kaggle" when running on Kaggle; overrides paths above
+  mode: "local"            # "local" or "kaggle"
+  kaggle_input_dir: "/kaggle/input/malto-hackathon"
+  kaggle_working_dir: "/kaggle/working"

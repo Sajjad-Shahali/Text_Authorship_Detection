@@ -1,0 +1,65 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+
+# ── Competition data (do not commit raw data to git) ─────────────────────────
+data/train.csv
+data/test.csv
+data/sample_submission.csv
+
+# ── Trained model artifacts ───────────────────────────────────────────────────
+artifacts/models/*.joblib
+artifacts/models/*.pkl
+
+# ── Submissions (optional: you may want to keep these) ───────────────────────
+# artifacts/submissions/
+
+# ── Experiment logs (optional) ────────────────────────────────────────────────
+# artifacts/experiments/
+# artifacts/logs/
+
+# ── Jupyter notebooks checkpoints ────────────────────────────────────────────
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# ── IDE / Editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+Thumbs.db
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+desktop.ini
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+/artifacts/experiments

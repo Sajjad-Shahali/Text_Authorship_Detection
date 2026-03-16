@@ -1,0 +1,4 @@
+model,mean_val_macro_f1,std_val_macro_f1,mean_train_macro_f1,mean_overfit_gap,oof_macro_f1,oof_accuracy
+logistic_regression,0.8029,0.0109,0.9997,0.1968,0.8032,0.9554
+linear_svc,0.8017,0.009,0.9994,0.1977,0.8022,0.9571
+complement_nb,0.6686,0.0192,0.942,0.2735,0.6712,0.9075
