@@ -21,6 +21,10 @@ Linear / margin-based (best for high-dim sparse text):
 
 Probabilistic / generative:
   complement_nb               — ComplementNB (good for imbalanced text classes)
+
+Neural network:
+  mlp_svd                     — TruncatedSVD(500) + MLPClassifier(512,256) — non-linear boundaries
+  ensemble_mlp                — Soft vote: mlp_svd + two_stage_top2
 """
 
 from typing import Dict
@@ -35,6 +39,9 @@ from sklearn.linear_model import (
     SGDClassifier,
 )
 from sklearn.naive_bayes import ComplementNB
+from sklearn.decomposition import TruncatedSVD
+from sklearn.neural_network import MLPClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.svm import LinearSVC
 
 from src.utils import get_logger
@@ -58,6 +65,89 @@ def _compute_deepseek_boost_weights(boost_factor: float = 2.0) -> dict:
     }
     weights[1] = weights[1] * boost_factor  # DeepSeek extra boost
     return weights
+
+
+class TfidfMLPClassifier(ClassifierMixin, BaseEstimator):
+    """
+    Neural network classifier for high-dimensional sparse text features.
+
+    Architecture:
+        sparse TF-IDF matrix (100k dims)
+        → TruncatedSVD (dense, n_components dims)
+        → MLPClassifier (hidden layers with ReLU + dropout equiv via alpha)
+
+    Why TruncatedSVD first:
+        MLPClassifier does not work well with 100k-dim sparse inputs —
+        the first weight matrix would be 100k × 512 (51M params) on 2400 samples.
+        Reducing to 500 dims captures ~70% of TF-IDF variance and gives the MLP
+        a tractable, dense input.
+
+    Why MLP over LR:
+        LR can only learn linear decision boundaries. The DS/Grok confusion involves
+        INTERACTIONS between features (e.g. short text AND no hedging AND specific
+        char patterns → DeepSeek) that require non-linear boundaries.
+
+    Class imbalance:
+        MLPClassifier has no class_weight parameter, so sample weights are computed
+        from class frequencies (same as class_weight='balanced') and passed to fit().
+    """
+
+    _estimator_type = "classifier"
+
+    def __init__(
+        self,
+        n_svd_components: int = 500,
+        hidden_layer_sizes=(512, 256),
+        activation: str = "relu",
+        alpha: float = 0.01,
+        max_iter: int = 300,
+        early_stopping: bool = True,
+        validation_fraction: float = 0.1,
+        random_state: int = 42,
+    ):
+        self.n_svd_components = n_svd_components
+        self.hidden_layer_sizes = hidden_layer_sizes
+        self.activation = activation
+        self.alpha = alpha
+        self.max_iter = max_iter
+        self.early_stopping = early_stopping
+        self.validation_fraction = validation_fraction
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+
+        # Step 1: dimensionality reduction — sparse → dense
+        n_components = min(self.n_svd_components, X.shape[1] - 1, X.shape[0] - 1)
+        self.svd_ = TruncatedSVD(
+            n_components=n_components,
+            random_state=self.random_state,
+        )
+        X_dense = self.svd_.fit_transform(X)
+
+        # Step 2: compute per-sample weights to handle class imbalance
+        sample_weights = compute_sample_weight("balanced", y)
+
+        # Step 3: train MLP
+        self.mlp_ = MLPClassifier(
+            hidden_layer_sizes=self.hidden_layer_sizes,
+            activation=self.activation,
+            solver="adam",
+            alpha=self.alpha,
+            max_iter=self.max_iter,
+            early_stopping=self.early_stopping,
+            validation_fraction=self.validation_fraction,
+            random_state=self.random_state,
+            n_iter_no_change=15,
+        )
+        self.mlp_.fit(X_dense, y, sample_weight=sample_weights)
+        return self
+
+    def predict(self, X):
+        return self.mlp_.predict(self.svd_.transform(X))
+
+    def predict_proba(self, X):
+        return self.mlp_.predict_proba(self.svd_.transform(X))
 
 
 class TwoStageClassifier(ClassifierMixin, BaseEstimator):
@@ -298,6 +388,8 @@ AVAILABLE_MODELS = [
     "two_stage_combined",      # top2 AND margin<0.30 (AND logic, most selective trigger)
     "ensemble_v2",             # Soft vote: two_stage_top2 + ensemble_soft
     "ensemble_two_stage",      # Soft vote: ensemble_soft + two_stage_conservative + lr_deepseek_boost
+    "mlp_svd",                 # TruncatedSVD(500) + MLPClassifier(512,256) — non-linear boundaries
+    "ensemble_mlp",            # Soft vote: mlp_svd + two_stage_top2
 ]
 
 
@@ -789,6 +881,69 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
 
         return VotingClassifier(
             [("top2_stage", top2_stage), ("soft_ens", soft_ens)],
+            voting="soft",
+            n_jobs=1,
+        )
+
+    # ── Neural network: TruncatedSVD + MLP (non-linear text classifier) ──────
+    if name == "mlp_svd":
+        # Architecture: TF-IDF (100k sparse) → SVD(500 dense) → MLP(512,256,ReLU)
+        # Non-linear decision boundaries capture feature INTERACTIONS like
+        # (short text AND no hedging AND specific char-ngrams) → DeepSeek
+        # that all linear models (LR, SVC, Ridge) fundamentally cannot learn.
+        # Sample weights replace class_weight='balanced' (MLPClassifier has no class_weight).
+        return TfidfMLPClassifier(
+            n_svd_components=500,
+            hidden_layer_sizes=(512, 256),
+            activation="relu",
+            alpha=0.01,           # stronger L2 vs default 0.0001 — prevents overfit on 2400 samples
+            max_iter=300,
+            early_stopping=True,
+            validation_fraction=0.1,
+            random_state=seed,
+        )
+
+    # ── Ensemble MLP: soft vote of mlp_svd + two_stage_top2 ──────────────────
+    if name == "ensemble_mlp":
+        # Combines the non-linear MLP boundaries with the two_stage_top2 specialist.
+        # The two models learn completely different representations:
+        #   mlp_svd: dense SVD features → non-linear interactions
+        #   two_stage_top2: sparse TF-IDF → linear boundary + dedicated DS/Grok stage
+        # Soft averaging of orthogonal models typically outperforms either alone.
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        # Rebuild two_stage_top2 inline
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5),
+            max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"),
+            class_weight="balanced",
+            random_state=seed,
+        )
+        top2_binary = LogisticRegression(
+            C=1.5,
+            max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"),
+            class_weight="balanced",
+            random_state=seed,
+        )
+        top2_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary,
+            top2_trigger=True,
+            binary_ds_threshold=0.50,
+        )
+        mlp = TfidfMLPClassifier(
+            n_svd_components=500,
+            hidden_layer_sizes=(512, 256),
+            activation="relu",
+            alpha=0.01,
+            max_iter=300,
+            early_stopping=True,
+            validation_fraction=0.1,
+            random_state=seed,
+        )
+        return VotingClassifier(
+            [("top2_stage", top2_stage), ("mlp_svd", mlp)],
             voting="soft",
             n_jobs=1,
         )

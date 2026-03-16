@@ -12,6 +12,15 @@
 #     Goal: fire only when truly ambiguous, near-zero false positive risk
 #   - ensemble_v2: soft vote of [two_stage_top2 + ensemble_soft]
 #     Goal: complement DS recall (0.70) with Grok recall (0.93) from each model
+#
+# Run 7 results: two_stage_top2 still winner (CV=0.9328). Conservative binary FAILED
+#   (DS recall 0.46 — natural weights too Grok-biased). Combined trigger traded DS->Grok=20
+#   for Grok->DS=19 — net 35 total DS/Grok errors same. Linear ceiling confirmed.
+#
+# Run 8 — Neural Network (target: break linear ceiling ~0.9328):
+#   - mlp_svd: TruncatedSVD(500) + MLPClassifier(512,256,ReLU) with balanced sample weights
+#     Non-linear boundaries can learn feature interactions LR fundamentally cannot
+#   - ensemble_mlp: soft vote of mlp_svd + two_stage_top2 (orthogonal representations)
 # ============================================================
 
 # -----------------------------------------------------------
@@ -98,11 +107,10 @@ learning_curve:
 # -----------------------------------------------------------
 models:
   run_models:
-    - "ensemble_soft"                  # baseline: LB=0.91089, CV=0.9272
-    - "two_stage_top2"                 # Run 6 winner: CV=0.9328, DS recall=0.70
-    - "two_stage_top2_conservative"    # NEW: top2 + natural binary weights (less Grok->DS)
-    - "two_stage_combined"             # NEW GPT: top2 AND margin<0.30 (AND logic)
-    - "ensemble_v2"                    # NEW: soft vote top2 + ensemble_soft
+    - "two_stage_top2"                 # linear best: CV=0.9328, DS recall=0.70
+    - "mlp_svd"                        # NEW NN: SVD(500)+MLP(512,256), non-linear boundaries
+    - "ensemble_mlp"                   # NEW: soft vote mlp_svd + two_stage_top2
+    - "ensemble_soft"                  # linear baseline: CV=0.9272
 
   # NOTE: when run_cv=true, the CV winner OVERRIDES this setting.
   # This value is only used when run_cv=false (direct final training).

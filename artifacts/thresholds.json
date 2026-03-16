@@ -1,12 +1,12 @@
 {
-  "model": "two_stage_top2",
+  "model": "ensemble_mlp",
   "thresholds": [
-    1.25,
     1.0,
     1.0,
-    1.75,
     1.0,
-    1.5
+    1.0,
+    0.75,
+    0.75
   ],
-  "ds_grok_pair_threshold": 0.525
+  "ds_grok_pair_threshold": 0.475
 }

@@ -333,8 +333,8 @@ Then submit `artifacts/submissions/submission_latest.csv` to Kaggle.
 
 ## Run 7 — Net DS/Grok Error Reduction (5 models)
 **Date**: 2026-03-16
-**Kaggle public LB**: (pending)
-**Target**: Reduce total DS+Grok errors below 30 (currently 35)
+**Kaggle public LB**: (pending — same CV winner two_stage_top2, submit to confirm)
+**Target**: Reduce total DS+Grok errors below 30
 
 ### Run 6 diagnosis
 Run 6 two_stage_top2 improved DS recall (0.61→0.70) but traded:
@@ -369,6 +369,30 @@ DS samples but also over-claims ambiguous Grok samples as DS.
 5. **Enhancement**: `_compute_trigger_mask` now uses AND logic when both top2_trigger
    AND margin_trigger_gap are set — enables the two_stage_combined model
 
+### Run 7 actual results (OOF CV)
+| Model                       | CV Macro F1 | DS→Grok | Grok→DS | DS recall |
+|-----------------------------|-------------|---------|---------|-----------|
+| two_stage_top2              | **0.9328**  | 21      | 14      | 0.70      |
+| ensemble_v2                 | 0.9292      | 26      | 12      | 0.64      |
+| two_stage_combined          | 0.9277      | 20      | 19      | 0.71      |
+| ensemble_soft               | 0.9272      | 28      | 10      | 0.61      |
+| two_stage_top2_conservative | 0.9061      | **40**  | **5**   | **0.46**  |
+
+### Run 7 diagnosis — linear ceiling confirmed
+- **two_stage_top2_conservative FAILED**: natural binary weights (1:2 DS:Grok ratio)
+  with C=0.8 massively over-biased toward Grok. DS recall dropped from 0.70 → 0.46.
+  Root cause: C=0.8 + class_weight=None + ds_threshold=0.52 = triple Grok bias.
+- **two_stage_combined (GPT suggestion)**: AND trigger (top2 AND margin<0.30) achieved
+  best DS→Grok count (20) but worst Grok→DS (19). The AND logic is so selective that
+  it only fires on the most ambiguous cases — where the binary has least information,
+  so it over-corrects toward DS to compensate, creating Grok→DS false positives.
+- **ensemble_v2**: Averaging two_stage_top2 with ensemble_soft diluted the DS recall
+  improvement (0.70 → 0.64). The soft ensemble smoothed out the two_stage corrections.
+- **Conclusion**: All linear models are capped at CV ~0.9328. Every trigger/weight
+  combination just trades DS→Grok errors for Grok→DS errors without reducing the total.
+  The DS/Grok boundary is **non-linearly inseparable** in TF-IDF space for short texts
+  that cover the same topics. A neural network is needed.
+
 ### How to run
 ```
 cd d:\hachaton\text-authorship-detection
@@ -376,3 +400,67 @@ cd d:\hachaton\text-authorship-detection
 python main_train.py --config configs/config.yaml
 python main_infer.py --config configs/config.yaml
 ```
+
+---
+
+## Run 8 — Neural Network: TruncatedSVD + MLP
+**Date**: 2026-03-16
+**Kaggle public LB**: (pending — run main_train.py then main_infer.py)
+**Target**: Break linear ceiling (CV > 0.9328), reduce total DS+Grok errors below 30
+
+### Why a neural network?
+All linear models in Runs 1-7 are capped at CV ~0.9328. The core issue is that the
+27 false-negative DeepSeek texts (short factual statements) are **linearly inseparable**
+from Grok in TF-IDF space when they cover the same topics. Linear classifiers (LR, SVC,
+Ridge) can only draw hyperplane boundaries in the feature space — they cannot learn
+INTERACTIONS like `(short text) AND (no hedging words) AND (specific char n-gram pattern)
+→ DeepSeek`. A neural network with hidden layers can learn these non-linear combinations.
+
+### Architecture: TfidfMLPClassifier
+```
+Sparse TF-IDF input (~100k features)
+  → TruncatedSVD(500)         # dense 500-dim representation (≈70% variance retained)
+  → MLPClassifier(512, 256)   # 2 hidden layers, ReLU activation
+  → 6-class softmax output
+```
+Key design choices:
+- **TruncatedSVD first**: MLP with 100k sparse inputs would have 51M weight parameters
+  for just the first layer (100k × 512). With 2400 training samples this massively overfits.
+  SVD reduces to 500 dense dimensions (tractable: 500 × 512 = 256k params).
+- **alpha=0.01 (L2 reg)**: Stronger than sklearn default 0.0001. Essential on small dataset.
+- **early_stopping=True**: Monitors validation loss, stops if no improvement for 15 epochs.
+- **sample_weight='balanced'**: MLPClassifier has no class_weight parameter, so balanced
+  sample weights are computed and passed to fit() — equivalent to class_weight='balanced'.
+
+### New models
+1. **`mlp_svd`**: `TfidfMLPClassifier(n_svd=500, hidden=(512,256), alpha=0.01)`
+   - Pure MLP approach — tests whether non-linear boundaries help DS/Grok
+
+2. **`ensemble_mlp`**: `VotingClassifier(soft)` of `[mlp_svd, two_stage_top2]`
+   - Orthogonal representations: MLP learns dense SVD features, top2 learns sparse TF-IDF
+   - Soft averaging of orthogonal models typically beats either model individually
+
+### Changes from Run 7
+1. Added `TfidfMLPClassifier` class to `src/models.py`
+   - Pure sklearn (no torch/transformers required)
+   - TruncatedSVD for dimensionality reduction
+   - MLPClassifier with Adam optimizer + L2 regularization + early stopping
+   - compute_sample_weight for class imbalance handling
+2. Added `mlp_svd` model to factory
+3. Added `ensemble_mlp` model to factory (mlp_svd + two_stage_top2 soft vote)
+4. Updated `AVAILABLE_MODELS` and module docstring
+
+### How to run
+```
+cd d:\hachaton\text-authorship-detection
+.env\Scripts\activate
+python main_train.py --config configs/config.yaml
+python main_infer.py --config configs/config.yaml
+```
+
+### What to watch in results
+- If `mlp_svd` CV > 0.9328 → non-linear boundaries are helping
+- If DS recall improves from 0.70 → neural features are learning the DS/Grok interaction
+- If `ensemble_mlp` > both individually → orthogonal ensemble working as expected
+- Overfit gap: MLP with alpha=0.01 should have train_f1 ≈ 0.96-0.98 (not 1.0)
+  If train_f1 = 1.0 → increase alpha (try 0.05 or 0.1)
