@@ -78,9 +78,13 @@ class Preprocessor(BaseEstimator, TransformerMixin):
 
         if self.remove_repeated_spaces:
             text = re.sub(r" {2,}", " ", text)
-            # Also normalize other whitespace variants (tabs, newlines → space)
-            text = re.sub(r"[\t\r\n]+", " ", text)
-            text = re.sub(r" {2,}", " ", text)
+            # Normalize line endings (CRLF/CR → LF) and convert tabs to spaces,
+            # but PRESERVE newline characters — they carry structural signals
+            # (paragraph breaks, list items, markdown headers) that are key
+            # discriminators between LLMs (especially Gemini's formatted output).
+            text = re.sub(r"\r\n?", "\n", text)   # CRLF / CR  → LF
+            text = re.sub(r"\t+", " ", text)        # tabs → space
+            text = re.sub(r" {2,}", " ", text)      # collapse multiple spaces
 
         if self.lowercase:
             text = text.lower()

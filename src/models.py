@@ -43,6 +43,12 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.neural_network import MLPClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.svm import LinearSVC
+<<<<<<< Updated upstream
+=======
+from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
+from sklearn.model_selection import StratifiedKFold
+>>>>>>> Stashed changes
 
 from src.utils import get_logger
 
@@ -364,6 +370,129 @@ class SeedAveragingClassifier(ClassifierMixin, BaseEstimator):
     def predict(self, X):
         return self.classes_[np.argmax(self.predict_proba(X), axis=1)]
 
+<<<<<<< Updated upstream
+=======
+
+class LGBMTfidfClassifier(ClassifierMixin, BaseEstimator):
+    """
+    TruncatedSVD + LightGBM gradient boosting.
+
+    Gradient boosting over dense latent TF-IDF features.  Unlike MLP, LGBM:
+      - Handles class imbalance via is_unbalance / sample weights natively
+      - Is more interpretable (feature importance)
+      - Often generalises better with small datasets (~2400 samples)
+      - Is not sensitive to probability calibration issues
+    """
+    _estimator_type = "classifier"
+
+    def __init__(self, n_svd_components=300, n_estimators=300, num_leaves=31,
+                 learning_rate=0.05, min_child_samples=10, subsample=0.8,
+                 colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=0.1,
+                 random_state=42):
+        self.n_svd_components   = n_svd_components
+        self.n_estimators       = n_estimators
+        self.num_leaves         = num_leaves
+        self.learning_rate      = learning_rate
+        self.min_child_samples  = min_child_samples
+        self.subsample          = subsample
+        self.colsample_bytree   = colsample_bytree
+        self.reg_alpha          = reg_alpha
+        self.reg_lambda         = reg_lambda
+        self.random_state       = random_state
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.svd_ = TruncatedSVD(
+            n_components=self.n_svd_components, random_state=self.random_state
+        )
+        X_dense = self.svd_.fit_transform(X)
+
+        # Balanced sample weights (handles 80 DS vs 1520 Human imbalance)
+        cw = compute_class_weight("balanced", classes=self.classes_, y=y)
+        sample_weight = np.array([cw[int(np.where(self.classes_ == yi)[0][0])] for yi in y])
+
+        self.lgbm_ = LGBMClassifier(
+            n_estimators=self.n_estimators,
+            num_leaves=self.num_leaves,
+            learning_rate=self.learning_rate,
+            min_child_samples=self.min_child_samples,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            random_state=self.random_state,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        self.lgbm_.fit(X_dense, y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X):
+        return self.lgbm_.predict(self.svd_.transform(X))
+
+    def predict_proba(self, X):
+        return self.lgbm_.predict_proba(self.svd_.transform(X))
+
+
+class XGBTfidfClassifier(ClassifierMixin, BaseEstimator):
+    """
+    TruncatedSVD + XGBoost gradient boosting.
+
+    Complementary to LGBMTfidfClassifier in the stacking ensemble:
+    - Different regularization bias (XGBoost depth-wise vs LGBM leaf-wise growth)
+    - Different default split criteria (exact vs histogram-based)
+    - Adds diversity to the stacking meta-features without adding a new model family
+    """
+    _estimator_type = "classifier"
+
+    def __init__(self, n_svd_components=300, n_estimators=300, max_depth=6,
+                 learning_rate=0.05, subsample=0.8, colsample_bytree=0.8,
+                 reg_alpha=0.1, reg_lambda=1.0, min_child_weight=3,
+                 random_state=42):
+        self.n_svd_components  = n_svd_components
+        self.n_estimators      = n_estimators
+        self.max_depth         = max_depth
+        self.learning_rate     = learning_rate
+        self.subsample         = subsample
+        self.colsample_bytree  = colsample_bytree
+        self.reg_alpha         = reg_alpha
+        self.reg_lambda        = reg_lambda
+        self.min_child_weight  = min_child_weight
+        self.random_state      = random_state
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.svd_ = TruncatedSVD(
+            n_components=self.n_svd_components, random_state=self.random_state
+        )
+        X_dense = self.svd_.fit_transform(X)
+
+        sample_weight = compute_sample_weight("balanced", y)
+
+        self.xgb_ = XGBClassifier(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            learning_rate=self.learning_rate,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            min_child_weight=self.min_child_weight,
+            random_state=self.random_state,
+            n_jobs=-1,
+            verbosity=0,
+        )
+        self.xgb_.fit(X_dense, y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X):
+        return self.xgb_.predict(self.svd_.transform(X))
+
+    def predict_proba(self, X):
+        return self.xgb_.predict_proba(self.svd_.transform(X))
+
+
+>>>>>>> Stashed changes
 logger = get_logger(__name__)
 
 AVAILABLE_MODELS = [
@@ -390,6 +519,19 @@ AVAILABLE_MODELS = [
     "ensemble_two_stage",      # Soft vote: ensemble_soft + two_stage_conservative + lr_deepseek_boost
     "mlp_svd",                 # TruncatedSVD(500) + MLPClassifier(512,256) — non-linear boundaries
     "ensemble_mlp",            # Soft vote: mlp_svd + two_stage_top2
+<<<<<<< Updated upstream
+=======
+    "mlp_svd_ds_boost",        # MLP with mild DeepSeek sample weight boost (1.5x)
+    "mlp_svd_calibrated",      # CalibratedClassifierCV wrapping MLP (isotonic) — FAILED Run 9
+    "ensemble_mlp_weighted",   # Soft vote: mlp(weight=2) + two_stage_top2(weight=1)
+    # ── Run 10: LightGBM + stacking ──────────────────────────────────────────
+    "lgbm_svd",                # TruncatedSVD(300) + LightGBM (gradient boosting)
+    "ensemble_lgbm",           # Soft vote: lgbm_svd + two_stage_top2
+    "mlp_svd_calibrated_sigmoid",  # MLP with sigmoid calibration (fixed from isotonic)
+    "stacking_lgbm",           # StackingClassifier: [two_stage_top2, mlp_svd, lgbm_svd] → LR meta
+    "stacking_lgbm_v2",        # stacking_lgbm + LGBM binary + tuned meta-LR (C=1, balanced=None, cv=5)
+    "stacking_lgbm_v3",        # stacking_lgbm + XGBoost as 4th base + StratifiedKFold inner CV
+>>>>>>> Stashed changes
 ]
 
 
@@ -930,7 +1072,12 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
             base_classifier=top2_base,
             binary_classifier=top2_binary,
             top2_trigger=True,
+<<<<<<< Updated upstream
             binary_ds_threshold=0.50,
+=======
+            margin_trigger_gap=gap,   # BUG FIX: was read from config but never passed
+            binary_ds_threshold=ds_thr,
+>>>>>>> Stashed changes
         )
         mlp = TfidfMLPClassifier(
             n_svd_components=500,
@@ -948,6 +1095,433 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
             n_jobs=1,
         )
 
+<<<<<<< Updated upstream
+=======
+    # ── MLP with DeepSeek sample weight boost ────────────────────────────────
+    if name == "mlp_svd_ds_boost":
+        # Same as mlp_svd but DeepSeek training samples get 1.5x weight on top
+        # of the balanced weights.  Mild boost — avoids the Grok->DS over-correction
+        # seen with the 2x global class boost in lr_deepseek_boost.
+        mc = _mlp_cfg(model_cfg)
+        ds_boost = model_cfg.get("deepseek_boost", 2.0)
+        return TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=min(ds_boost, 1.5),  # cap at 1.5 — mild boost only
+            verbose=mc["verbose"],
+        )
+
+    # ── Calibrated MLP (isotonic calibration of probabilities) ───────────────
+    if name == "mlp_svd_calibrated":
+        # MLP probabilities can be poorly calibrated — they tend to be overconfident.
+        # CalibratedClassifierCV with isotonic regression reshapes the probability
+        # outputs to better reflect true class frequencies, which improves the
+        # threshold optimizer and pair-threshold post-processing.
+        mc = _mlp_cfg(model_cfg)
+        base_mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        # cv=3 refit calibration on 3 inner folds — expensive but proper
+        return CalibratedClassifierCV(base_mlp, cv=3, method="isotonic")
+
+    # ── Weighted ensemble: mlp gets 2x vote vs two_stage_top2 ─────────────────
+    if name == "ensemble_mlp_weighted":
+        # Equal 1:1 weighting in ensemble_mlp is just the default — not justified.
+        # mlp_svd generally has higher CV F1 and lower overfit gap than two_stage_top2,
+        # so giving it 2x weight tests whether the MLP representation is dominant.
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        ds_thr  = model_cfg.get("two_stage_ds_threshold", 0.50)
+        mc = _mlp_cfg(model_cfg)
+
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5), max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_binary = LogisticRegression(
+            C=1.5, max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary,
+            top2_trigger=True,
+            binary_ds_threshold=ds_thr,
+        )
+        mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        return VotingClassifier(
+            [("mlp", mlp), ("top2_stage", top2_stage)],
+            voting="soft",
+            weights=[2, 1],   # mlp gets double weight
+            n_jobs=1,
+        )
+
+    # ── LightGBM in SVD space ─────────────────────────────────────────────────
+    if name == "lgbm_svd":
+        # Gradient boosting over TruncatedSVD(300) latent features.
+        # Key advantages over MLP:
+        #   - Native class-imbalance handling via sample weights
+        #   - No calibration issues (tree models produce better calibrated probas)
+        #   - Regularisation via min_child_samples and L1/L2 penalties
+        #   - Different inductive bias: axis-aligned splits vs. smooth boundaries
+        lc = model_cfg.get("lgbm", {})
+        return LGBMTfidfClassifier(
+            n_svd_components=lc.get("n_svd_components", 300),
+            n_estimators=lc.get("n_estimators", 300),
+            num_leaves=lc.get("num_leaves", 31),
+            learning_rate=lc.get("learning_rate", 0.05),
+            min_child_samples=lc.get("min_child_samples", 10),
+            subsample=lc.get("subsample", 0.8),
+            colsample_bytree=lc.get("colsample_bytree", 0.8),
+            reg_alpha=lc.get("reg_alpha", 0.1),
+            reg_lambda=lc.get("reg_lambda", 0.1),
+            random_state=seed,
+        )
+
+    # ── Ensemble: soft vote of lgbm_svd + two_stage_top2 ─────────────────────
+    if name == "ensemble_lgbm":
+        # Combines gradient boosting (lgbm_svd) with the linear two-stage specialist.
+        # Analogous to ensemble_mlp but uses LGBM instead of MLP:
+        #   - LGBM has native class-weight support → no calibration drift
+        #   - two_stage_top2 brings dedicated DS/Grok binary specialist
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        ds_thr  = model_cfg.get("two_stage_ds_threshold", 0.50)
+        gap     = model_cfg.get("two_stage_margin_gap", 0.40)   # BUG FIX: was missing
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5), max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_binary = LogisticRegression(
+            C=1.5, max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary,
+            top2_trigger=True,
+            margin_trigger_gap=gap,   # BUG FIX: now passed correctly
+            binary_ds_threshold=ds_thr,
+        )
+        lc = model_cfg.get("lgbm", {})
+        lgbm = LGBMTfidfClassifier(
+            n_svd_components=lc.get("n_svd_components", 300),
+            n_estimators=lc.get("n_estimators", 300),
+            num_leaves=lc.get("num_leaves", 31),
+            learning_rate=lc.get("learning_rate", 0.05),
+            min_child_samples=lc.get("min_child_samples", 10),
+            subsample=lc.get("subsample", 0.8),
+            colsample_bytree=lc.get("colsample_bytree", 0.8),
+            reg_alpha=lc.get("reg_alpha", 0.1),
+            reg_lambda=lc.get("reg_lambda", 0.1),
+            random_state=seed,
+        )
+        return VotingClassifier(
+            [("lgbm", lgbm), ("top2_stage", top2_stage)],
+            voting="soft",
+            n_jobs=1,
+        )
+
+    # ── MLP with SIGMOID calibration (fixed from isotonic which failed Run 9) ─
+    if name == "mlp_svd_calibrated_sigmoid":
+        # Run 9 mlp_svd_calibrated used isotonic regression which requires 500+
+        # samples per class to be reliable — DS only has 80, so it collapsed to 0.9184.
+        # Sigmoid calibration (Platt scaling) has far fewer parameters and works
+        # well even with small per-class sample counts.
+        mc = _mlp_cfg(model_cfg)
+        base_mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        # cv=3 with sigmoid — much more data-efficient than isotonic
+        return CalibratedClassifierCV(base_mlp, cv=3, method="sigmoid")
+
+    # ── Stacking meta-learner: [two_stage_top2 + mlp_svd + lgbm_svd] → LR ────
+    if name == "stacking_lgbm":
+        # StackingClassifier trains each base estimator using 3-fold internal CV,
+        # then fits a LogisticRegression meta-classifier on the OOF class probabilities.
+        # This leverages the complementary strengths of three very different models:
+        #   two_stage_top2: sparse linear + dedicated DS/Grok binary
+        #   mlp_svd:        dense MLP — non-linear TF-IDF interactions
+        #   lgbm_svd:       gradient boosting — tree-based non-linear interactions
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        ds_thr  = model_cfg.get("two_stage_ds_threshold", 0.50)
+        gap     = model_cfg.get("two_stage_margin_gap", 0.40)   # BUG FIX: now read
+        mc      = _mlp_cfg(model_cfg)
+        lc      = model_cfg.get("lgbm", {})
+
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5), max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_binary = LogisticRegression(
+            C=1.5, max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        base_two_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary,
+            top2_trigger=True,
+            margin_trigger_gap=gap,   # BUG FIX: now passed correctly
+            binary_ds_threshold=ds_thr,
+        )
+        base_mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        base_lgbm = LGBMTfidfClassifier(
+            n_svd_components=lc.get("n_svd_components", 300),
+            n_estimators=lc.get("n_estimators", 300),
+            num_leaves=lc.get("num_leaves", 31),
+            learning_rate=lc.get("learning_rate", 0.05),
+            min_child_samples=lc.get("min_child_samples", 10),
+            subsample=lc.get("subsample", 0.8),
+            colsample_bytree=lc.get("colsample_bytree", 0.8),
+            reg_alpha=lc.get("reg_alpha", 0.1),
+            reg_lambda=lc.get("reg_lambda", 0.1),
+            random_state=seed,
+        )
+        # Meta: simple LR on 18-dim meta-features (3 models × 6 classes)
+        meta_lr = LogisticRegression(
+            C=0.1,           # strong regularisation — meta-features are correlated
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=seed,
+        )
+        return StackingClassifier(
+            estimators=[
+                ("two_stage_top2", base_two_stage),
+                ("mlp_svd",        base_mlp),
+                ("lgbm_svd",       base_lgbm),
+            ],
+            final_estimator=meta_lr,
+            cv=3,
+            stack_method="predict_proba",
+            n_jobs=1,
+            passthrough=False,
+        )
+
+    # ── Stacking v2: tuned meta-LR + LGBM binary for DS/Grok ────────────────
+    if name == "stacking_lgbm_v2":
+        # Upgrades over stacking_lgbm:
+        #   1. LGBM binary classifier for DS/Grok (non-linear boundary)
+        #   2. Meta-LR: C=1.0, class_weight=None, cv=5 (less conservative, no bias)
+        #   3. margin_trigger_gap passed correctly to TwoStageClassifier
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        ds_thr  = model_cfg.get("two_stage_ds_threshold", 0.50)
+        gap     = model_cfg.get("two_stage_margin_gap", 0.40)
+        mc      = _mlp_cfg(model_cfg)
+        lc      = model_cfg.get("lgbm", {})
+
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5), max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        # LGBM binary: non-linear DS/Grok separator — replaces LR C=1.5
+        # 240 total binary samples (80 DS + 160 Grok) — keep it simple
+        top2_binary_lgbm = LGBMClassifier(
+            n_estimators=200,
+            num_leaves=31,
+            learning_rate=0.05,
+            min_child_samples=5,
+            class_weight="balanced",
+            random_state=seed,
+            verbose=-1,
+        )
+        base_two_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary_lgbm,
+            top2_trigger=True,
+            margin_trigger_gap=gap,
+            binary_ds_threshold=ds_thr,
+        )
+        base_mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        base_lgbm = LGBMTfidfClassifier(
+            n_svd_components=lc.get("n_svd_components", 300),
+            n_estimators=lc.get("n_estimators", 300),
+            num_leaves=lc.get("num_leaves", 31),
+            learning_rate=lc.get("learning_rate", 0.05),
+            min_child_samples=lc.get("min_child_samples", 10),
+            subsample=lc.get("subsample", 0.8),
+            colsample_bytree=lc.get("colsample_bytree", 0.8),
+            reg_alpha=lc.get("reg_alpha", 0.1),
+            reg_lambda=lc.get("reg_lambda", 0.1),
+            random_state=seed,
+        )
+        # Tuned meta: C=1.0 (less conservative), no class_weight (meta-features
+        # are already calibrated proba vectors — balancing distorts the signal),
+        # cv=5 (more stable OOF estimates for meta training)
+        meta_lr = LogisticRegression(
+            C=1.0,
+            max_iter=1000,
+            class_weight=None,
+            random_state=seed,
+        )
+        return StackingClassifier(
+            estimators=[
+                ("two_stage_top2", base_two_stage),
+                ("mlp_svd",        base_mlp),
+                ("lgbm_svd",       base_lgbm),
+            ],
+            final_estimator=meta_lr,
+            cv=5,
+            stack_method="predict_proba",
+            n_jobs=1,
+            passthrough=False,
+        )
+
+    # ── Stacking v3: XGBoost as 4th base + StratifiedKFold inner CV ─────────
+    if name == "stacking_lgbm_v3":
+        # Upgrades over stacking_lgbm:
+        #   1. XGBTfidfClassifier as 4th base — different regularization bias from LGBM
+        #   2. StratifiedKFold(5) inner CV — guarantees minority class representation
+        #      in each meta-feature fold (80 DS samples need stratification to avoid
+        #      folds with 0 DS samples)
+        #   3. Meta-LR C=0.5, class_weight='balanced' — tighter than v1 (C=0.1) but
+        #      with proper class balancing for 24-dim meta features (4 models × 6 classes)
+        cfg_lr  = model_cfg.get("logistic_regression_balanced", {})
+        ds_thr  = model_cfg.get("two_stage_ds_threshold", 0.50)
+        gap     = model_cfg.get("two_stage_margin_gap", 0.40)
+        mc      = _mlp_cfg(model_cfg)
+        lc      = model_cfg.get("lgbm", {})
+        xc      = model_cfg.get("xgb", {})
+
+        top2_base = LogisticRegression(
+            C=cfg_lr.get("C", 0.5), max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        top2_binary = LogisticRegression(
+            C=1.5, max_iter=cfg_lr.get("max_iter", 1000),
+            solver=cfg_lr.get("solver", "lbfgs"), class_weight="balanced",
+            random_state=seed,
+        )
+        base_two_stage = TwoStageClassifier(
+            base_classifier=top2_base,
+            binary_classifier=top2_binary,
+            top2_trigger=True,
+            margin_trigger_gap=gap,
+            binary_ds_threshold=ds_thr,
+        )
+        base_mlp = TfidfMLPClassifier(
+            n_svd_components=mc["n_svd_components"],
+            hidden_layer_sizes=mc["hidden_layer_sizes"],
+            activation="relu",
+            alpha=mc["alpha"],
+            max_iter=mc["max_iter"],
+            early_stopping=mc["early_stopping"],
+            validation_fraction=mc["validation_fraction"],
+            random_state=seed,
+            deepseek_boost_factor=mc["deepseek_boost_factor"],
+            verbose=mc["verbose"],
+        )
+        base_lgbm = LGBMTfidfClassifier(
+            n_svd_components=lc.get("n_svd_components", 300),
+            n_estimators=lc.get("n_estimators", 300),
+            num_leaves=lc.get("num_leaves", 31),
+            learning_rate=lc.get("learning_rate", 0.05),
+            min_child_samples=lc.get("min_child_samples", 10),
+            subsample=lc.get("subsample", 0.8),
+            colsample_bytree=lc.get("colsample_bytree", 0.8),
+            reg_alpha=lc.get("reg_alpha", 0.1),
+            reg_lambda=lc.get("reg_lambda", 0.1),
+            random_state=seed,
+        )
+        base_xgb = XGBTfidfClassifier(
+            n_svd_components=xc.get("n_svd_components", 300),
+            n_estimators=xc.get("n_estimators", 300),
+            max_depth=xc.get("max_depth", 6),
+            learning_rate=xc.get("learning_rate", 0.05),
+            subsample=xc.get("subsample", 0.8),
+            colsample_bytree=xc.get("colsample_bytree", 0.8),
+            reg_alpha=xc.get("reg_alpha", 0.1),
+            reg_lambda=xc.get("reg_lambda", 1.0),
+            min_child_weight=xc.get("min_child_weight", 3),
+            random_state=seed,
+        )
+        # StratifiedKFold guarantees all 6 classes (especially DS=80) appear in
+        # each inner fold — prevents degenerate OOF meta-features for minority classes
+        inner_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+        # Meta: 24-dim OOF proba (4 models × 6 classes) → LR
+        meta_lr = LogisticRegression(
+            C=0.5,
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=seed,
+        )
+        return StackingClassifier(
+            estimators=[
+                ("two_stage_top2", base_two_stage),
+                ("mlp_svd",        base_mlp),
+                ("lgbm_svd",       base_lgbm),
+                ("xgb_svd",        base_xgb),
+            ],
+            final_estimator=meta_lr,
+            cv=inner_cv,
+            stack_method="predict_proba",
+            n_jobs=1,
+            passthrough=False,
+        )
+
+>>>>>>> Stashed changes
     raise ValueError(f"Unknown model '{name}'. Available: {AVAILABLE_MODELS}")
 
 

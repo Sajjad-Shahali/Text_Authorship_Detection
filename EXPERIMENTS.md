@@ -464,3 +464,221 @@ python main_infer.py --config configs/config.yaml
 - If `ensemble_mlp` > both individually → orthogonal ensemble working as expected
 - Overfit gap: MLP with alpha=0.01 should have train_f1 ≈ 0.96-0.98 (not 1.0)
   If train_f1 = 1.0 → increase alpha (try 0.05 or 0.1)
+<<<<<<< Updated upstream
+=======
+
+---
+
+## Run 9 — Stabilise MLP + Calibration + Weighted Ensemble
+**Date**: 2026-03-16
+**Kaggle public LB**: (not yet submitted — per-model submissions generated)
+**Best CV model**: `ensemble_mlp` — OOF 0.9360
+
+### Run 8 diagnosis → Run 9 fixes
+Run 8 showed MLP improves CV but hurt LB. Three targeted fixes:
+1. **Calibrate MLP probabilities** (GPT fix): raw MLP softmax is overconfident.
+   CalibratedClassifierCV (isotonic) reshapes probabilities to match true frequencies.
+   This should make the pair threshold and global thresholds work correctly on test data.
+2. **Mild DS boost** (GPT fix): instead of global class weight boost, apply 1.5x sample
+   weight specifically to DeepSeek in the MLP. More targeted than the 2x global boost
+   that created Grok→DS errors.
+3. **Weighted ensemble** (GPT + own): give MLP 2x vote vs two_stage_top2 in the ensemble.
+   MLP has lower overfit gap (0.059 vs 0.065) suggesting it generalises better.
+
+### Changes from Run 8
+1. **GPT fix**: `ensemble_mlp` now reads two-stage settings from config (was hardcoded)
+2. **GPT fix**: `mlp_svd` and `ensemble_mlp` now read ALL MLP params from `config.mlp`
+3. **`mlp_svd_ds_boost`** (new): TfidfMLPClassifier with DeepSeek sample weight ×1.5
+   - Mild boost: forces MLP to pay attention to DS errors without over-correcting
+4. **`mlp_svd_calibrated`** (new GPT): CalibratedClassifierCV(mlp_svd, cv=3, isotonic)
+   - Fixes overconfident MLP probabilities → better threshold calibration on test set
+5. **`ensemble_mlp_weighted`** (new GPT+own): VotingClassifier weights=[2,1] (mlp:top2)
+   - MLP has lower overfit gap → giving it 2x vote weight should improve test generalisation
+6. **Better verbose**: fold progress bars, running best-model tracker, per-model summaries
+7. **Per-model submissions**: each model folder gets its own submission CSV
+8. **Added `mlp.verbose` to config**: set `true` to see MLP loss per iteration
+
+### How to run
+```
+cd d:\hachaton\text-authorship-detection
+.env\Scripts\activate
+python main_train.py --config configs/config.yaml
+python main_infer.py --config configs/config.yaml
+```
+Submit `artifacts/submissions/submission_latest.csv` for best model.
+Per-model: submit each `artifacts/experiments/<run>/*/submission_*.csv` to compare.
+
+### Run 9 Actual Results
+| Model                   | CV F1  | OOF F1 | DS→Grok | Grok→DS |
+|-------------------------|--------|--------|---------|---------|
+| ensemble_mlp            | 0.9350 | 0.9360 | 22      | 12      |
+| mlp_svd                 | 0.9340 | 0.9354 | 25      | 9       |
+| ensemble_mlp_weighted   | 0.9329 | 0.9342 | —       | —       |
+| two_stage_top2          | 0.9328 | 0.9339 | 21      | 14      |
+| mlp_svd_calibrated      | 0.9184 | 0.9193 | —       | —       | ← FAILED
+| mlp_svd_ds_boost        | 0.9172 | 0.9155 | 15      | 28      | ← FAILED
+
+**Diagnosis:**
+- `mlp_svd_calibrated` FAILED: isotonic regression needs 500+ samples per class; DS=80.
+  Calibration noise dominated the signal. CV dropped -0.017 vs uncalibrated.
+- `mlp_svd_ds_boost` FAILED: DS recall improved (62/80) but Grok→DS exploded to 28.
+  Total DS+Grok confusion = 43 (worse than baseline 34).
+- `ensemble_mlp_weighted` provided no gain — MLP already dominates at equal weight.
+- Error analysis: DS→Grok and Grok→DS confused texts are identical length (~191 chars,
+  ~27 words). Semantic deadlock — DS/Grok both produce short encyclopedic factual sentences.
+
+---
+
+## Run 10 — LightGBM + Stacking Meta-Learner
+**Date**: 2026-03-16
+**Kaggle public LB**: (pending)
+**Target**: Exceed CV 0.9360 (ensemble_mlp) via gradient boosting + stacking
+
+### Run 9 diagnosis → Run 10 approach
+Three problems to address:
+1. **Linear ceiling**: LR/SVC all cap at 0.9328. MLP broke it but with calibration issues.
+   → Try LightGBM: gradient boosting over SVD space, different inductive bias from MLP.
+2. **Calibration**: MLP isotonic calibration needs more data than available (80 DS samples).
+   → Fix with sigmoid calibration (Platt scaling — only 2 params per class).
+3. **Ensemble diversity plateau**: soft vote of same-type models gives diminishing returns.
+   → Stacking meta-learner: learns WHEN each model is right, not just averages probabilities.
+
+### Changes from Run 9
+1. **`lgbm_svd`** (new): `TruncatedSVD(300)` + `LGBMClassifier` with balanced sample weights.
+   Gradient boosting handles class imbalance natively; tree splits capture interactions
+   that both LR and MLP may miss; well-calibrated probabilities out-of-the-box.
+2. **`ensemble_lgbm`** (new): soft vote `lgbm_svd` + `two_stage_top2`.
+   Analogous to `ensemble_mlp`, tests whether LGBM complements the linear two-stage model.
+3. **`mlp_svd_calibrated_sigmoid`** (new): `CalibratedClassifierCV(mlp_svd, cv=3, sigmoid)`.
+   Sigmoid needs only 2 params per class; data-efficient unlike isotonic (which failed Run 9).
+4. **`stacking_lgbm`** (new): `StackingClassifier([two_stage_top2, mlp_svd, lgbm_svd] → LR)`.
+   Meta-LR learns which base model's predictions to trust per region of the feature space.
+   18-dim meta-features (3 models × 6 class proba) → `LogisticRegression(C=0.1)`.
+5. **2 new stylometric features** (43→45 total):
+   - `starts_with_the`: 1.0 if text begins with "The " — Grok→DS confused texts pattern.
+   - `clause_per_sent`: commas per sentence — proxy for compound sentence complexity.
+6. **LightGBM installed**: `lightgbm==4.6.0`, `xgboost==3.2.0`.
+7. **`lgbm:` config section** added (n_svd_components=300, n_estimators=300, etc).
+
+### How to run
+```
+cd d:\hachaton\text-authorship-detection
+.env\Scripts\activate
+python main_train.py --config configs/config.yaml
+python main_infer.py --config configs/config.yaml
+```
+Submit `artifacts/submissions/submission_latest.csv` for best model.
+Per-model: submit each `artifacts/experiments/<run>/*/submission_*.csv` to compare.
+
+---
+
+## Run 12 — New Features + XGBoost 4th Base + StratifiedKFold
+**Date**: 2026-03-17
+**Kaggle public LB**: (pending — run main_train.py then main_infer.py)
+**Target**: > 0.93 LB — new feature branches should close DS/Grok gap
+
+### Changes from Run 11
+All 8 planned improvements implemented (6 from Codex analysis, 2 from own analysis):
+
+#### Bug fixes
+1. **`return [0.0] * 43` → `[0.0] * 49`** (`src/features.py:103`) — invalid/empty texts returned a
+   43-element vector while normal texts returned 45 (now 49). Silent shape corruption on any
+   empty test row.
+2. **`import math` moved to module level** — was called inside every per-sample `_f()` invocation
+   (2400 × 5 folds = 12k redundant imports per run). Now at top of file.
+
+#### New stylometric features (45 → 49 total)
+3. **`definition_opening`**: 1.0 if first sentence matches `"X is/was/are/were..."` pattern.
+   DS short texts typically open with a one-liner definition sentence.
+4. **`article_rate`**: `the/a/an` density per word. Encyclopedic DS texts are article-heavy.
+5. **`copula_rate`**: `is/are/was/were` per sentence. Definitional sentence structure signal.
+6. **`year_rate`**: historical year patterns `\b(1\d{3}|20\d{2})\b` per sentence. Factual
+   texts reference years more; distribution differs between DS and Grok.
+
+#### New feature branches (affect ALL models)
+7. **`FunctionWordAnalyzer` + function-word bigrams/trigrams**:
+   - Replaces static `vocabulary=FUNCTION_WORDS` (unigrams only) with a serializable
+     callable class that extracts n-grams of function words.
+   - Bigrams like `"however , the"`, `"it is a"`, `"not only but"` are strong LLM style
+     fingerprints that unigrams cannot capture.
+   - Config: `ngram_range: [1, 3]`, `max_features: 5000`, `min_df: 2`
+
+8. **`DSGrokSubspaceTfidf`** (new `ds_grok_tfidf` branch):
+   - Word TF-IDF trained ONLY on DeepSeek+Grok samples (~240) inside each CV fold.
+   - Vocabulary is topic-neutral and tuned to the DS/Grok boundary — every term in the
+     vocabulary is one that appears in DS or Grok texts, not Human/Claude/Gemini/ChatGPT.
+   - Zero activations for non-DS/Grok texts are intentional: the branch "sees" those texts
+     as blank, which itself is a strong signal.
+   - Config: `ngram_range: [1, 3]`, `max_features: 10000`, `min_df: 1`
+
+9. **`DelexTfidfVectorizer`** (new `delex_tfidf` branch):
+   - Word TF-IDF where all digit sequences are replaced with `__NUM__` before vectorization.
+   - Reduces topic leakage from specific numbers/years (both DS and Grok write factual
+     encyclopedic texts about history — specific year mentions are topic, not style).
+   - `__NUM__` itself becomes a feature encoding "number density" and "position of numbers
+     in text structure".
+   - Config: `ngram_range: [1, 2]`, `max_features: 30000`, `min_df: 2`
+
+#### New model
+10. **`stacking_lgbm_v3`** (new):
+    - Base models: `[two_stage_top2, mlp_svd, lgbm_svd, xgb_svd]` — XGBoost as 4th base.
+    - XGBoost differs from LGBM in regularization bias (depth-wise vs leaf-wise tree growth)
+      → adds genuine meta-feature diversity (24-dim meta-features vs 18-dim in v1).
+    - Inner CV: `StratifiedKFold(n_splits=5, shuffle=True)` instead of `cv=3` integer.
+      With only 80 DS samples, an integer cv=3 could produce folds with 0 DS samples
+      → degenerate meta-features. StratifiedKFold guarantees representation in every fold.
+    - Meta-LR: `C=0.5`, `class_weight='balanced'` — tighter than v1 (C=0.1) with class
+      balancing for the 24-dim meta space.
+
+### Feature union summary (Run 12)
+| Branch | Type | Features |
+|---|---|---|
+| word_tfidf | word ngrams (1,2) | 50k |
+| char_tfidf | char_wb (2,6) | 50k |
+| char_tfidf_micro | char (3,7) | 20k |
+| stylometric | 49 hand-crafted | 49 |
+| function_word_tfidf | fw bigrams/trigrams | 5k |
+| ds_grok_tfidf | DS/Grok vocab only | 10k |
+| delex_tfidf | word ngrams on __NUM__ text | 30k |
+| **Total** | | **~165k** |
+
+### How to run
+```
+cd d:\hachaton\text-authorship-detection
+.env\Scripts\activate
+python main_train.py --config configs/config.yaml
+python main_infer.py --config configs/config.yaml
+```
+Submit `artifacts/submissions/submission_latest.csv` for best model.
+
+---
+
+## Run 11 — Bug Fixes + Stacking v2 (LGBM Binary + Tuned Meta)
+**Date**: 2026-03-17
+**Kaggle public LB**: (pending)
+**Target**: Exceed CV 0.9393 (stacking_lgbm Run 10) by fixing bugs + upgrading stacking
+
+### Run 10 diagnosis → Run 11 approach
+1. **Bug fix: newline preservation** — preprocessor collapsed `\n` to space, destroying paragraph/list/header structure. Gemini uses heavy markdown; this killed its features.
+2. **Bug fix: margin_trigger_gap** — config `0.40` was read but never passed to `TwoStageClassifier`. These models ran with margin_trigger_gap=None (unlimited triggers). Over-triggering caused 4 new Gemini→DS errors in Run 10.
+3. **Feature: char_tfidf_micro** — new char(3,7) branch captures micro punct patterns across word boundaries (analyzer=char, no padding). Complements existing char_wb(2,6).
+4. **stacking_lgbm_v2** — LGBM binary for DS/Grok stage-2 + meta C=1.0/class_weight=None/cv=5.
+5. **LGBM upgrades**: n_svd_components 300→500, n_estimators 300→500, num_leaves 31→63.
+
+### Changes from Run 10
+1. **`preprocess.py`**: preserves `\n`. Only normalizes `\r\n`→`\n` and tabs→space. (Codex finding)
+2. **`models.py`**: `margin_trigger_gap=gap` now passed to all TwoStageClassifier instances in ensemble_mlp, ensemble_lgbm, stacking_lgbm. Previously silently ignored. (Codex finding)
+3. **`features.py`**: Added `build_char_tfidf_micro()` + `char_tfidf_micro` FeatureUnion branch.
+4. **`stacking_lgbm_v2`** (new): LGBM binary (200 trees, balanced) + tuned meta-LR (C=1.0, class_weight=None, cv=5).
+5. **`configs/config.yaml`**: Added char_tfidf_micro section, upgraded lgbm params (n_svd=500, n_est=500, num_leaves=63), run_models=[two_stage_top2, stacking_lgbm, stacking_lgbm_v2].
+
+### How to run
+```
+cd d:\hachaton\text-authorship-detection
+.env\Scripts\activate
+python main_train.py --config configs/config.yaml
+python main_infer.py --config configs/config.yaml
+```
+Submit `artifacts/submissions/submission_latest.csv` for best model.
+Per-model: submit each `artifacts/experiments/<run>/*/submission_*.csv` to compare.
+>>>>>>> Stashed changes

@@ -1,6 +1,7 @@
 {
   "model": "ensemble_mlp",
   "thresholds": [
+<<<<<<< Updated upstream
     1.0,
     1.0,
     1.0,
@@ -9,4 +10,14 @@
     0.75
   ],
   "ds_grok_pair_threshold": 0.475
+=======
+    1.75,
+    0.75,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "ds_grok_pair_threshold": 0.575
+>>>>>>> Stashed changes
 }
