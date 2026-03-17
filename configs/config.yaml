@@ -21,6 +21,27 @@
 #   - mlp_svd: TruncatedSVD(500) + MLPClassifier(512,256,ReLU) with balanced sample weights
 #     Non-linear boundaries can learn feature interactions LR fundamentally cannot
 #   - ensemble_mlp: soft vote of mlp_svd + two_stage_top2 (orthogonal representations)
+<<<<<<< Updated upstream
+=======
+# MALTO Text Authorship Detection — Configuration  (Run 12)
+# ============================================================
+# Run 11 results: pending (stacking_lgbm bug-fixed, stacking_lgbm_v2 new)
+# Run 12 (target: push LB past 0.92, close gap to ~0.93):
+#   Features (affect ALL models):
+#     1. 4 new stylometric features: def_opening, article_rate, copula_rate, year_rate
+#        → 49 total stylometric features (up from 45)
+#     2. function_word_tfidf: extended to bigrams/trigrams via FunctionWordAnalyzer
+#     3. ds_grok_tfidf: new branch — TF-IDF fitted only on DS+Grok 240 samples
+#        → topic-neutral vocabulary tuned to DS/Grok boundary
+#     4. delex_tfidf: new branch — word TF-IDF with digits → __NUM__ tokens
+#        → reduces topic leakage from specific numbers/years
+#   Bug fixes:
+#     5. return [0.0] * 43 → [0.0] * 49 (silent shape bug for empty texts)
+#     6. import math moved to module level (was inside per-sample _f())
+#   New model:
+#     7. stacking_lgbm_v3: XGBoost as 4th stacking base + StratifiedKFold(5)
+#        inner CV (vs cv=3 integer — prevents degenerate DS folds)
+>>>>>>> Stashed changes
 # ============================================================
 
 # -----------------------------------------------------------
@@ -107,6 +128,7 @@ learning_curve:
 # -----------------------------------------------------------
 models:
   run_models:
+<<<<<<< Updated upstream
     - "two_stage_top2"                 # linear best: CV=0.9328, DS recall=0.70
     - "mlp_svd"                        # NEW NN: SVD(500)+MLP(512,256), non-linear boundaries
     - "ensemble_mlp"                   # NEW: soft vote mlp_svd + two_stage_top2
@@ -115,6 +137,15 @@ models:
   # NOTE: when run_cv=true, the CV winner OVERRIDES this setting.
   # This value is only used when run_cv=false (direct final training).
   best_model: "ensemble_soft"
+=======
+    - "two_stage_top2"                 # linear reference: CV=0.9328
+    - "stacking_lgbm"                  # proven stacking baseline
+    - "stacking_lgbm_v3"               # XGBoost 4th base + StratifiedKFold
+
+  # NOTE: when run_cv=true, the CV winner OVERRIDES this setting.
+  # This value is only used when run_cv=false (direct final training).
+  best_model: "stacking_lgbm_v3"
+>>>>>>> Stashed changes
 
   # DeepSeek weight multiplier on top of 'balanced' for lr_deepseek_boost
   deepseek_boost: 2.0
@@ -123,6 +154,44 @@ models:
   two_stage_margin_gap: 0.40      # only invoke binary when |P(DS)-P(Grok)| < gap
   two_stage_ds_threshold: 0.52    # binary needs P(DS) >= this to predict DeepSeek
 
+<<<<<<< Updated upstream
+=======
+  # ── LightGBM hyperparameters (used by lgbm_svd, ensemble_lgbm, stacking_lgbm, stacking_lgbm_v2)
+  lgbm:
+    n_svd_components: 500         # TruncatedSVD output dims (300→500: richer representation)
+    n_estimators: 500             # boosting rounds (300→500: more capacity)
+    num_leaves: 63                # tree complexity (31→63: captures non-linear DS/Grok boundary)
+    learning_rate: 0.05           # shrinkage — slower but more generalizable
+    min_child_samples: 10         # min samples per leaf — regularisation for small DS class
+    subsample: 0.8                # row subsampling per tree
+    colsample_bytree: 0.8         # feature subsampling per tree
+    reg_alpha: 0.1                # L1 regularisation
+    reg_lambda: 0.1               # L2 regularisation
+
+  # ── XGBoost hyperparameters (used by xgb_svd, stacking_lgbm_v3)
+  xgb:
+    n_svd_components: 300         # TruncatedSVD dims (lighter than LGBM's 500 — XGB is slower)
+    n_estimators: 300             # boosting rounds
+    max_depth: 6                  # depth-wise tree growth (vs LGBM leaf-wise)
+    learning_rate: 0.05
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1                # L1 regularisation
+    reg_lambda: 1.0               # L2 regularisation (XGBoost default = 1.0)
+    min_child_weight: 3           # min sum of instance weights in a leaf
+
+  # ── MLP neural network hyperparameters (used by mlp_svd, mlp_svd_ds_boost, ensemble_mlp)
+  mlp:
+    n_svd_components: 500       # TruncatedSVD output dims (sparse → dense)
+    hidden_layer_sizes: [512, 256]  # MLP hidden layer sizes
+    alpha: 0.01                 # L2 regularization (default 0.0001 too weak for 2400 samples)
+    max_iter: 300               # max training iterations
+    early_stopping: true        # stop early if val loss stagnates for 15 epochs
+    validation_fraction: 0.1    # fraction of training data held for early stopping
+    deepseek_boost_factor: 1.0  # DS sample weight multiplier on top of balanced (1.0 = off)
+    verbose: false              # set true to see MLP loss per iteration
+
+>>>>>>> Stashed changes
   # ── Model hyperparameters ────────────────────────────────────────────────
   logistic_regression:
     C: 0.5
