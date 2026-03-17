@@ -3,6 +3,7 @@ features.py -- Feature engineering pipeline.
 43 hand-crafted stylometric features + word/char/function-word TF-IDF.
 All fitted INSIDE CV folds -- no leakage.
 """
+import math
 import re
 import string
 from typing import Dict, List
@@ -89,6 +90,9 @@ class StyleometricTransformer(BaseEstimator, TransformerMixin):
         r'apparently|typically|usually|often)\b',
         re.IGNORECASE
     )
+    # DS/Grok encyclopedic discriminators (Run 12)
+    _DEF_RE  = re.compile(r'^[A-Z][^.!?\n]{0,80}\b(is|are|was|were)\b', re.IGNORECASE)
+    _YEAR_RE = re.compile(r'\b(1[0-9]{3}|20[0-2][0-9])\b')
 
     def fit(self, X, y=None):
         return self
@@ -98,7 +102,7 @@ class StyleometricTransformer(BaseEstimator, TransformerMixin):
 
     def _f(self, text):
         if not text or not isinstance(text, str):
-            return [0.0] * 43
+            return [0.0] * 49
         NL2 = '\n\n'
         NL1 = '\n'
         ch = len(text)
@@ -183,7 +187,6 @@ class StyleometricTransformer(BaseEstimator, TransformerMixin):
         sent_range = float(max(swc) - min(swc)) if len(swc) > 1 else 0.0
 
         # text_len_log: log10 of char count — length bucket is a style signal
-        import math
         text_len_log = math.log10(max(ch, 1))
 
 <<<<<<< Updated upstream
@@ -262,7 +265,7 @@ class DenseToSparse(BaseEstimator, TransformerMixin):
 
 
 class StyleometricPipeline(BaseEstimator, TransformerMixin):
-    """Extractor + MaxAbsScaler + sparse conversion."""
+    """Extractor + MaxAbsScaler + sparse conversion. 49 features."""
     _FEATURE_NAMES = [
         "ch", "nw", "ns", "np", "awl", "nw_per_s", "nw_per_p", "ttr", "lwr",
         "vss", "vls", "apc", "cm", "per", "ex", "qu", "co", "se", "qt", "pa",
@@ -292,18 +295,155 @@ class StyleometricPipeline(BaseEstimator, TransformerMixin):
         return np.array(self._FEATURE_NAMES)
 
 
+class FunctionWordAnalyzer:
+    """
+    Callable analyzer that extracts n-grams composed only of function words.
+
+    Unlike vocabulary=FUNCTION_WORDS (unigram-only), this supports bigrams and
+    trigrams of function words: e.g., "however , the", "it is a", "not only but".
+    These transition n-grams are strong LLM style fingerprints.
+
+    Serializable (class with __call__) — safe for joblib/pickle.
+    """
+
+    def __init__(self, ngram_range=(1, 2)):
+        self.ngram_range = ngram_range
+        self._fw_set = frozenset(FUNCTION_WORDS)
+        self._tok_re = re.compile(r'(?u)\b\w+\b')
+
+    def __call__(self, text: str):
+        tokens = [t for t in self._tok_re.findall(text.lower()) if t in self._fw_set]
+        min_n, max_n = self.ngram_range
+        grams = []
+        for n in range(min_n, max_n + 1):
+            for i in range(len(tokens) - n + 1):
+                grams.append(' '.join(tokens[i:i + n]))
+        return grams
+
+
 def build_function_word_tfidf(cfg: Dict) -> TfidfVectorizer:
     """
-    TF-IDF restricted to the FUNCTION_WORDS vocabulary.
+    TF-IDF over function-word n-grams.
     Captures style fingerprint (how the author connects ideas)
     rather than topic (what the text is about).
+    Supports ngram_range from config (default [1,2] for bigrams).
+    """
+    ngram_range = tuple(cfg.get("ngram_range", [1, 2]))
+    return TfidfVectorizer(
+        analyzer=FunctionWordAnalyzer(ngram_range),
+        max_features=cfg.get("max_features", 5000),
+        min_df=cfg.get("min_df", 2),
+        sublinear_tf=cfg.get("sublinear_tf", True),
+    )
+
+
+class DSGrokSubspaceTfidf(BaseEstimator, TransformerMixin):
+    """
+    Word TF-IDF fitted ONLY on DeepSeek (class 1) + Grok (class 2) training samples.
+
+    Creates a topic-neutral vocabulary tailored to the DS/Grok decision boundary.
+    By training only on these two classes the vocabulary is free of signal from
+    Human/Claude/Gemini/ChatGPT text, giving the DS/Grok discriminator a clean slate.
+
+    During fit  : filters to y==1|2, fits TF-IDF on those ~240 samples only.
+    During transform: applies to ALL samples (zero activations for clearly non-DS/Grok
+                      texts are intentional — other classes look "foreign" to this TF-IDF).
+    """
+
+    _DEEPSEEK = 1
+    _GROK = 2
+
+    def __init__(self, max_features: int = 10000, ngram_range=(1, 3), min_df: int = 1):
+        self.max_features = max_features
+        self.ngram_range = ngram_range
+        self.min_df = min_df
+
+    def fit(self, X, y=None):
+        if y is not None:
+            y_arr = np.array(y)
+            mask = (y_arr == self._DEEPSEEK) | (y_arr == self._GROK)
+            X_dg = [X[i] for i in range(len(X)) if mask[i]]
+        else:
+            X_dg = list(X)  # fallback: fit on all (shouldn't happen in CV)
+
+        if len(X_dg) < 4:
+            X_dg = list(X)  # safety fallback
+
+        self.tfidf_ = TfidfVectorizer(
+            analyzer='word',
+            ngram_range=self.ngram_range,
+            max_features=self.max_features,
+            min_df=self.min_df,
+            sublinear_tf=True,
+            token_pattern=r'(?u)\b\w+\b',
+        )
+        self.tfidf_.fit(X_dg)
+        return self
+
+    def transform(self, X, y=None):
+        return self.tfidf_.transform(X)
+
+    def get_feature_names_out(self, input_features=None):
+        return self.tfidf_.get_feature_names_out()
+
+
+class DelexTfidfVectorizer(BaseEstimator, TransformerMixin):
+    """
+    Word TF-IDF on delexicalized text: digit sequences replaced with __NUM__.
+
+    Reduces topic leakage from specific numbers/years (a factual text about
+    "World War 2" and one about "the Silk Road" both become less distinguishable
+    by their numbers, shifting the model toward structural n-gram patterns).
+
+    The __NUM__ token itself becomes a feature capturing "number density" and
+    "position of numbers in text structure" — both useful for DS/Grok discrimination.
+    """
+
+    _NUM_RE = re.compile(r'\b\d+\b')
+
+    def __init__(self, max_features: int = 30000, ngram_range=(1, 2), min_df: int = 2):
+        self.max_features = max_features
+        self.ngram_range = ngram_range
+        self.min_df = min_df
+
+    def _delex(self, text: str) -> str:
+        return self._NUM_RE.sub('__NUM__', text)
+
+    def fit(self, X, y=None):
+        self.tfidf_ = TfidfVectorizer(
+            analyzer='word',
+            ngram_range=self.ngram_range,
+            max_features=self.max_features,
+            min_df=self.min_df,
+            sublinear_tf=True,
+            token_pattern=r'(?u)\b\w+\b',  # \w matches _ so __NUM__ is a valid token
+        )
+        self.tfidf_.fit([self._delex(t) for t in X])
+        return self
+
+    def transform(self, X, y=None):
+        return self.tfidf_.transform([self._delex(t) for t in X])
+
+    def get_feature_names_out(self, input_features=None):
+        return self.tfidf_.get_feature_names_out()
+
+
+def build_char_tfidf_micro(cfg: Dict) -> TfidfVectorizer:
+    """
+    Second character-level TF-IDF with `analyzer='char'` (no word-boundary padding)
+    and a tighter n-gram range (3,7).
+
+    Captures micro punctuation/spacing patterns that distinguish DS/Grok short
+    factual texts — e.g., ". " transitions, comma patterns, "The " starts.
+    Complements build_char_tfidf (char_wb range 2-6).
     """
     return TfidfVectorizer(
-        analyzer="word",
-        vocabulary=FUNCTION_WORDS,
-        ngram_range=(1, 1),
+        analyzer=cfg.get("analyzer", "char"),
+        ngram_range=tuple(cfg.get("ngram_range", [3, 7])),
+        max_features=cfg.get("max_features", 20000),
+        min_df=cfg.get("min_df", 2),
+        max_df=cfg.get("max_df", 0.95),
         sublinear_tf=cfg.get("sublinear_tf", True),
-        token_pattern=r"(?u)\b\w+\b",
     )
 
 
@@ -311,21 +451,51 @@ def build_feature_union(config: Dict) -> FeatureUnion:
     fc  = config.get("features", {})
     wc  = fc.get("word_tfidf", {})
     cc  = fc.get("char_tfidf", {})
+    mc  = fc.get("char_tfidf_micro", {})
     sc  = fc.get("stylometric", {})
     fw  = fc.get("function_word_tfidf", {})
+    dgc = fc.get("ds_grok_tfidf", {})
+    dlc = fc.get("delex_tfidf", {})
 
     trans = [
         ("word_tfidf", build_word_tfidf(wc)),
         ("char_tfidf", build_char_tfidf(cc)),
     ]
+    if mc.get("enabled", True):
+        trans.append(("char_tfidf_micro", build_char_tfidf_micro(mc)))
+        logger.info(f"  Char micro TF-IDF (3,7): ENABLED ({mc.get('max_features', 20000)} features)")
+    else:
+        logger.info("  Char micro TF-IDF: disabled")
+
     if sc.get("enabled", True):
         trans.append(("stylometric", StyleometricPipeline()))
-        logger.info("  Stylometric features: ENABLED (43 features)")
+        logger.info("  Stylometric features: ENABLED (49 features)")
     else:
         logger.info("  Stylometric features: disabled")
 
     if fw.get("enabled", False):
+        ngr = fw.get("ngram_range", [1, 2])
         trans.append(("function_word_tfidf", build_function_word_tfidf(fw)))
-        logger.info(f"  Function-word TF-IDF: ENABLED ({len(FUNCTION_WORDS)} words)")
+        logger.info(f"  Function-word TF-IDF: ENABLED (ngram {ngr}, {fw.get('max_features', 5000)} features)")
+
+    if dgc.get("enabled", False):
+        ngr = dgc.get("ngram_range", [1, 3])
+        mf  = dgc.get("max_features", 10000)
+        trans.append(("ds_grok_tfidf", DSGrokSubspaceTfidf(
+            max_features=mf,
+            ngram_range=tuple(ngr),
+            min_df=dgc.get("min_df", 1),
+        )))
+        logger.info(f"  DS/Grok subspace TF-IDF: ENABLED (ngram {ngr}, {mf} features)")
+
+    if dlc.get("enabled", False):
+        ngr = dlc.get("ngram_range", [1, 2])
+        mf  = dlc.get("max_features", 30000)
+        trans.append(("delex_tfidf", DelexTfidfVectorizer(
+            max_features=mf,
+            ngram_range=tuple(ngr),
+            min_df=dlc.get("min_df", 2),
+        )))
+        logger.info(f"  Delex TF-IDF: ENABLED (ngram {ngr}, {mf} features)")
 
     return FeatureUnion(transformer_list=trans)
