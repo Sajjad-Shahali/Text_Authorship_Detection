@@ -43,12 +43,9 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import LinearSVC
-<<<<<<< Updated upstream
-=======
 from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
->>>>>>> Stashed changes
 
 from src.utils import get_logger
 
@@ -377,8 +374,6 @@ class SeedAveragingClassifier(ClassifierMixin, BaseEstimator):
     def predict(self, X):
         return self.classes_[np.argmax(self.predict_proba(X), axis=1)]
 
-<<<<<<< Updated upstream
-=======
 
 class LGBMTfidfClassifier(ClassifierMixin, BaseEstimator):
     """
@@ -498,7 +493,7 @@ class XGBTfidfClassifier(ClassifierMixin, BaseEstimator):
     def predict_proba(self, X):
         return self.xgb_.predict_proba(self.svd_.transform(X))
 
->>>>>>> Stashed changes
+
 logger = get_logger(__name__)
 
 
@@ -539,8 +534,6 @@ AVAILABLE_MODELS = [
     "ensemble_two_stage",      # Soft vote: ensemble_soft + two_stage_conservative + lr_deepseek_boost
     "mlp_svd",                 # TruncatedSVD(500) + MLPClassifier(512,256) — non-linear boundaries
     "ensemble_mlp",            # Soft vote: mlp_svd + two_stage_top2
-<<<<<<< Updated upstream
-=======
     "mlp_svd_ds_boost",        # MLP with mild DeepSeek sample weight boost (1.5x)
     "mlp_svd_calibrated",      # CalibratedClassifierCV wrapping MLP (isotonic) — FAILED Run 9
     "ensemble_mlp_weighted",   # Soft vote: mlp(weight=2) + two_stage_top2(weight=1)
@@ -551,7 +544,6 @@ AVAILABLE_MODELS = [
     "stacking_lgbm",           # StackingClassifier: [two_stage_top2, mlp_svd, lgbm_svd] → LR meta
     "stacking_lgbm_v2",        # stacking_lgbm + LGBM binary + tuned meta-LR (C=1, balanced=None, cv=5)
     "stacking_lgbm_v3",        # stacking_lgbm + XGBoost as 4th base + StratifiedKFold inner CV
->>>>>>> Stashed changes
 ]
 
 
@@ -1094,12 +1086,8 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
             base_classifier=top2_base,
             binary_classifier=top2_binary,
             top2_trigger=True,
-<<<<<<< Updated upstream
-            binary_ds_threshold=0.50,
-=======
-            margin_trigger_gap=gap,   # BUG FIX: was read from config but never passed
+            margin_trigger_gap=gap,
             binary_ds_threshold=ds_thr,
->>>>>>> Stashed changes
         )
         mlp = TfidfMLPClassifier(
             n_svd_components=500,
@@ -1117,8 +1105,6 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
             n_jobs=1,
         )
 
-<<<<<<< Updated upstream
-=======
     # ── MLP with DeepSeek sample weight boost ────────────────────────────────
     if name == "mlp_svd_ds_boost":
         # Same as mlp_svd but DeepSeek training samples get 1.5x weight on top
@@ -1543,7 +1529,6 @@ def get_model(name: str, config: Dict) -> BaseEstimator:
             passthrough=False,
         )
 
->>>>>>> Stashed changes
     raise ValueError(f"Unknown model '{name}'. Available: {AVAILABLE_MODELS}")
 
 
