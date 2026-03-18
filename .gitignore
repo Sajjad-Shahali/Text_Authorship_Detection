@@ -63,3 +63,11 @@ coverage.xml
 *.tmp
 *.bak
 /artifacts/experiments
+malto-hackathon-publicleaderboard4.csv
+malto-hackathon-publicleaderboard2.csv
+malto-hackathon-publicleaderboard6.csv
+malto-hackathon-publicleaderboard5.csv
+malto-hackathon-publicleaderboard3.csv
+malto-hackathon-publicleaderboard.csv
+malto-recruitment-hackathon-dataset.zip
+malto_codex_prompt_completed.md
