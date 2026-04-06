@@ -9,10 +9,10 @@
 
 | Score | Value |
 |-------|-------|
-| **Best Public Leaderboard** | **0.92422** |
+| **Best Public Leaderboard** | **0.92423** |
 | **Best Local CV (5-fold)** | **0.9393** |
 | **Best Competitor** | 0.96423 |
-| **Gap to Leader** | 0.04001 |
+| **Gap to Leader** | 0.04002 |
 
 ---
 
