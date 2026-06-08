@@ -1,5 +1,14 @@
 # MALTO Recruitment Hackathon 2026 — Text Authorship Detection
 
+![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![LB Score](https://img.shields.io/badge/Leaderboard%20Score-0.92422-brightgreen)
+![CV F1](https://img.shields.io/badge/CV%20F1%20(5--fold)-0.9393-green)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.8.0-F7931E?logo=scikit-learn&logoColor=white)
+![LightGBM](https://img.shields.io/badge/LightGBM-4.6.0-9ACD32)
+![Metric](https://img.shields.io/badge/Metric-Macro%20F1-blue)
+![No Transformers](https://img.shields.io/badge/No%20Transformers-%E2%9C%93-red)
+
 **Author:** [Sajjad Shahali](https://github.com/Sajjad-Shahali)
 **GitHub:** [text-authorship-detection](https://github.com/Sajjad-Shahali/text-authorship-detection)
 **Competition:** MALTO Recruitment Hackathon (2026)
@@ -13,6 +22,8 @@
 | **Best Local CV (5-fold)** | **0.9393** |
 | **Best Competitor** | 0.96423 |
 | **Gap to Leader** | 0.04001 |
+
+![Confusion Matrix](plots/01_confusion_matrix.png)
 
 ---
 
@@ -32,6 +43,8 @@ Given a raw text sample, classify which of 6 possible sources produced it:
 **Total:** 2,400 train · 600 test
 **Core challenge:** DeepSeek (80 samples) and Grok (160 samples) both produce short, factual,
 encyclopedia-style text. Distinguishing them is the primary bottleneck.
+
+![Class Distribution](plots/04_class_distribution.png)
 
 ---
 
@@ -115,6 +128,8 @@ The 3 base estimators are deliberately **orthogonal**:
 | TwoStageClassifier | Sparse TF-IDF | Linear + binary | Dedicated DS/Grok specialist |
 | TfidfMLPClassifier | Dense SVD(500) | Non-linear (MLP) | Feature interaction modeling |
 | LGBMTfidfClassifier | Dense SVD(300) | Non-linear (trees) | Robust, interpretable |
+
+![Model Comparison](plots/03_model_comparison.png)
 
 ---
 
